@@ -16,6 +16,11 @@ pub(super) struct Term {
 	last_buffer: Buffer,
 }
 
+#[cfg(windows)]
+unsafe extern "system" {
+	fn SetConsoleCtrlHandler(handler: Option<unsafe extern "system" fn(u32) -> i32>, add: i32) -> i32;
+}
+
 impl Term {
 	pub(super) fn start() -> Result<Self> {
 		let mut term = Self {
@@ -23,6 +28,9 @@ impl Term {
 			last_area:   Default::default(),
 			last_buffer: Default::default(),
 		};
+
+		#[cfg(windows)]
+		Self::disable_ctrl_c();
 
 		enable_raw_mode()?;
 		static FIRST: SyncCell<bool> = SyncCell::new(false);
@@ -70,6 +78,9 @@ impl Term {
 	}
 
 	fn stop(&mut self) -> Result<()> {
+		#[cfg(windows)]
+		Self::enable_ctrl_c();
+
 		if CSI_U.swap(false, Ordering::Relaxed) {
 			queue!(TTY.writer(), PopKeyboardEnhancementFlags).ok();
 		}
@@ -145,6 +156,27 @@ impl Term {
 
 	pub(super) fn can_partial(&mut self) -> bool {
 		self.inner.autoresize().is_ok() && self.last_area == self.inner.get_frame().area()
+	}
+
+	/// On Windows, when a blocking shell subprocess is running, Ctrl+C generates
+	/// `CTRL_C_EVENT` for all processes in the console group — including yazi itself.
+	/// Without a custom handler, the default behavior terminates yazi, causing it to
+	/// resume prematurely while the subprocess is still alive. This installs a handler
+	/// that ignores `CTRL_C_EVENT`, letting only the subprocess handle it.
+	#[cfg(windows)]
+	fn enable_ctrl_c() {
+		unsafe { SetConsoleCtrlHandler(Some(Self::ctrl_c_handler), 1) };
+	}
+
+	#[cfg(windows)]
+	fn disable_ctrl_c() {
+		unsafe { SetConsoleCtrlHandler(Some(Self::ctrl_c_handler), 0) };
+	}
+
+	#[cfg(windows)]
+	unsafe extern "system" fn ctrl_c_handler(ctrl_type: u32) -> i32 {
+		// CTRL_C_EVENT = 0 — ignore it so the blocking subprocess handles Ctrl+C alone
+		if ctrl_type == 0 { 1 } else { 0 }
 	}
 }
 
