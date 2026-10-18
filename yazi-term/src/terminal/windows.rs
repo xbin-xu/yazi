@@ -1,6 +1,6 @@
 use std::{io, mem, os::windows::prelude::*, sync::Arc};
 
-use windows_sys::Win32::{Globalization::CP_UTF8, System::Console::{CONSOLE_MODE, CONSOLE_SCREEN_BUFFER_INFO, DISABLE_NEWLINE_AUTO_RETURN, ENABLE_ECHO_INPUT, ENABLE_LINE_INPUT, ENABLE_MOUSE_INPUT, ENABLE_PROCESSED_INPUT, ENABLE_VIRTUAL_TERMINAL_INPUT, ENABLE_VIRTUAL_TERMINAL_PROCESSING, ENABLE_WINDOW_INPUT, GetConsoleScreenBufferInfo, SetConsoleCP, SetConsoleMode, SetConsoleOutputCP}};
+use windows_sys::Win32::{Globalization::CP_UTF8, System::Console::{CONSOLE_MODE, CONSOLE_SCREEN_BUFFER_INFO, DISABLE_NEWLINE_AUTO_RETURN, ENABLE_ECHO_INPUT, ENABLE_LINE_INPUT, ENABLE_MOUSE_INPUT, ENABLE_PROCESSED_INPUT, ENABLE_VIRTUAL_TERMINAL_INPUT, ENABLE_VIRTUAL_TERMINAL_PROCESSING, ENABLE_WINDOW_INPUT, CTRL_C_EVENT, GetConsoleScreenBufferInfo, SetConsoleCP, SetConsoleCtrlHandler, SetConsoleMode, SetConsoleOutputCP}};
 use yazi_shim::bool_ok;
 use yazi_tty::Tty;
 
@@ -28,6 +28,20 @@ impl<'a> Terminal<'a> {
 	}
 
 	pub fn setup(&self) -> io::Result<()> {
+		// Unix registers `SIGINT` and ignores it for the lifetime of the process; the
+		// Windows equivalent is a console handler that discards `CTRL_C_EVENT`.
+		//
+		// `ENABLE_PROCESSED_INPUT` is what makes the console turn Ctrl-C into that event,
+		// and it is back on whenever Yazi yields to a blocking child (`shell` with
+		// `block=true`) — but yielding restores the console modes directly, without
+		// going through a mode-switch method, so a handler tied to those switches would
+		// never be installed for the child's lifetime. Installing once here covers every
+		// path, and the default handler for the unhandled event is `ExitProcess`.
+		// https://github.com/sxyazi/yazi/discussions/3180
+		unsafe {
+			SetConsoleCtrlHandler(Some(Self::ignore_ctrl_c), 1);
+		}
+
 		self.set_input_cp(CP_UTF8)?;
 		self.set_output_cp(CP_UTF8)?;
 		Ok(())
@@ -74,6 +88,12 @@ impl<'a> Terminal<'a> {
 				| ENABLE_LINE_INPUT
 				| ENABLE_PROCESSED_INPUT,
 		)
+	}
+
+	/// Handle and discard `CTRL_C_EVENT`, leaving every other event (Ctrl-Break,
+	/// close, logoff, shutdown) to the default handler.
+	unsafe extern "system" fn ignore_ctrl_c(ctrl_type: u32) -> i32 {
+		(ctrl_type == CTRL_C_EVENT) as i32
 	}
 
 	fn set_input_cp(&self, cp: u32) -> io::Result<()> { bool_ok(unsafe { SetConsoleCP(cp) }) }
