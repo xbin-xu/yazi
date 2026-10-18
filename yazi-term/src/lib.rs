@@ -1,6 +1,6 @@
 mod macros;
 
-yazi_macro::mod_flat!(dimension error semaphore term timeout);
+yazi_macro::mod_flat!(ctrl_c dimension error semaphore term timeout);
 
 yazi_macro::mod_pub!(event parser restorer source stream terminal waker);
 

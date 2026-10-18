@@ -5,6 +5,11 @@ pub(super) struct Signals;
 
 impl Signals {
 	pub(super) fn start() -> Result<()> {
+		// Unix registers `SIGINT` below and ignores it; Windows has no signal stream,
+		// so `CTRL_C_EVENT` is discarded by a console handler instead.
+		#[cfg(windows)]
+		yazi_term::ignore_ctrl_c()?;
+
 		#[cfg(unix)]
 		use libc::{SIGCONT, SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIGTSTP};
 
